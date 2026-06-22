@@ -2,12 +2,55 @@ import { Worker } from 'bullmq';
 import { Document } from '@langchain/core/documents';
 import { PDFParse } from 'pdf-parse';
 import { readFileSync } from 'node:fs';
-import { CharacterTextSplitter } from '@langchain/textsplitters'
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
 import { getVectorStore } from './vectorStore.js'
 
-const CHUNK_SIZE = 1200;
+const CHUNK_SIZE = 1500;
 const CHUNK_OVERLAP = 200;
 const UPSERT_BATCH_SIZE = 24;
+const MAX_EMBED_TOKENS = 1800;
+const MAX_EMBED_CHARS = MAX_EMBED_TOKENS * 4;
+
+function approximateTokens(text) {
+    return Math.ceil(text.length / 4);
+}
+
+function enforceEmbeddingLimit(docs) {
+    const safeDocs = [];
+
+    for (const doc of docs) {
+        const content = (doc.pageContent || '').trim();
+        if (!content) {
+            continue;
+        }
+
+        if (approximateTokens(content) <= MAX_EMBED_TOKENS) {
+            safeDocs.push(new Document({
+                pageContent: content,
+                metadata: doc.metadata,
+            }));
+            continue;
+        }
+
+        // Hard-split any remaining oversized chunks (for long unbroken text blocks).
+        for (let i = 0; i < content.length; i += MAX_EMBED_CHARS) {
+            const slice = content.slice(i, i + MAX_EMBED_CHARS).trim();
+            if (!slice) {
+                continue;
+            }
+
+            safeDocs.push(new Document({
+                pageContent: slice,
+                metadata: {
+                    ...doc.metadata,
+                    subChunk: Math.floor(i / MAX_EMBED_CHARS),
+                },
+            }));
+        }
+    }
+
+    return safeDocs;
+}
 
 async function loadPdfPages(filePath) {
     const parser = new PDFParse({
@@ -41,12 +84,14 @@ const worker = new Worker(
         const pageDocs = await loadPdfPages(data.path);
         console.log(`Loaded ${pageDocs.length} pages from PDF`);
 
-        const splitter = new CharacterTextSplitter({
+        const splitter = new RecursiveCharacterTextSplitter({
             chunkSize: CHUNK_SIZE,
             chunkOverlap: CHUNK_OVERLAP,
+            separators: ['\n\n', '\n', '. ', ' ', ''],
         });
-        const docs = await splitter.splitDocuments(pageDocs);
-        console.log(`Created ${docs.length} chunks from PDF`);
+        const splitDocs = await splitter.splitDocuments(pageDocs);
+        const docs = enforceEmbeddingLimit(splitDocs);
+        console.log(`Created ${docs.length} safe chunks from PDF`);
 
         const vectorStore = await getVectorStore();
         let completed = 0;
