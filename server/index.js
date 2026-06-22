@@ -25,7 +25,7 @@ app.use(cors());
 const queue = new Queue("file-upload-queue", {
   connection: {
             host: 'localhost',
-            port:  '6379'
+            port:  6379
         }
 })
 
@@ -35,11 +35,23 @@ app.get('/api/data', (req, res) => {
 
 app.post('/upload/pdf', upload.single('pdf'), (req, res) => {
   // Handle PDF upload logic here
-  queue.add('file-ready',JSON.stringify({
-    filename: req.file.originalname,
-    destination: req.file.destination,
-    path: req.file.path
-  }))
+  queue.add(
+    'file-ready',
+    {
+      filename: req.file.originalname,
+      destination: req.file.destination,
+      path: req.file.path
+    },
+    {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 5000,
+      },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    }
+  )
   res.json({ message: 'PDF uploaded successfully!' });
 })
 
