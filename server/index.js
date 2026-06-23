@@ -56,7 +56,7 @@ app.post('/upload/pdf', upload.single('pdf'), (req, res) => {
 })
 
 app.get('/chat', async (req,res) => {
-  const userQuery  = 'Reportable Financial Relationships'
+  const userQuery  = 'what is event loop?'
   const vectorStore = await getVectorStore()
   const ret = vectorStore.asRetriever({
     k: 2,
